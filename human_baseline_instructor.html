@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Human Baseline — Instructor Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root {
+    --navy: #1E3A5F;
+    --coral: #E07A5F;
+    --coral-light: #E07A5F22;
+  }
+  body { font-size: 14px; line-height: 1.6; }
+  .review-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; background: #fff; }
+  .disagreement { border: 2px solid var(--coral) !important; }
+  .chart-container { width: 100%; max-width: 340px; height: 130px; }
+  .pulse { animation: pulse 2s infinite; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+  }
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+<!-- Header -->
+<header class="text-white py-4 px-6 shadow-md flex items-center justify-between" style="background:var(--navy)">
+  <div>
+    <h1 class="text-xl md:text-2xl font-bold tracking-tight">Human Baseline — Instructor Dashboard</h1>
+    <p class="text-sm opacity-80 mt-0.5">Session 5: Customer Voice — Text Analytics</p>
+  </div>
+  <div class="flex items-center gap-2">
+    <span id="liveIndicator" class="inline-block w-2.5 h-2.5 rounded-full bg-green-400 pulse"></span>
+    <span class="text-sm opacity-80">Live</span>
+  </div>
+</header>
+
+<main class="flex-1 px-6 pb-8 max-w-5xl mx-auto w-full">
+
+  <!-- Firebase warning -->
+  <div id="firebaseWarning" class="hidden mt-4">
+    <div class="rounded-lg p-4 border-l-4 border-red-500 bg-red-50">
+      <p class="text-sm text-red-800"><strong>Error:</strong> Could not connect to Firebase. Real-time updates are unavailable. Check your internet connection and reload.</p>
+    </div>
+  </div>
+
+  <!-- Waiting state -->
+  <div id="waitingState" class="mt-8 text-center">
+    <p class="text-lg text-gray-400">Waiting for student submissions...</p>
+    <p class="text-sm text-gray-300 mt-1">Results will appear here in real time.</p>
+  </div>
+
+  <!-- Summary stats -->
+  <div id="summaryStats" class="hidden rounded-lg p-4 mt-4 border-l-4" style="background:var(--coral-light);border-color:var(--coral)">
+    <p class="font-semibold text-base" style="color:var(--navy)">Summary</p>
+    <div class="flex flex-wrap gap-6 mt-2 text-sm">
+      <div><span class="text-gray-500">Students responded:</span> <span id="statCount" class="font-bold text-lg" style="color:var(--navy)">0</span></div>
+      <div><span class="text-gray-500">Most agreed-upon:</span> <span id="statAgreed" class="font-bold text-lg" style="color:var(--navy)">—</span></div>
+      <div><span class="text-gray-500">Most disagreed:</span> <span id="statDisagreed" class="font-bold text-lg" style="color:var(--coral)">—</span></div>
+    </div>
+  </div>
+
+  <!-- Per-review results -->
+  <div id="reviewResults" class="mt-4"></div>
+
+  <!-- Controls -->
+  <div id="controls" class="hidden mt-6 flex flex-wrap gap-3 justify-center pb-4">
+    <button onclick="exportCSV()" class="px-6 py-2 rounded-lg text-white font-semibold text-sm" style="background:var(--navy)">Export CSV</button>
+    <button onclick="confirmReset()" class="px-6 py-2 rounded-lg font-semibold text-sm border-2" style="border-color:var(--coral);color:var(--coral)">Reset All</button>
+  </div>
+</main>
+
+<!-- Footer -->
+<footer class="text-center text-xs text-gray-400 py-4 border-t border-gray-200 mt-auto">
+  BDDM &bull; MSc Tourism Management &bull; Alba Graduate Business School
+</footer>
+
+<script>
+// ─── DATA ────────────────────────────────────────────────────────────
+var REVIEWS = [
+  {id:1, stars:5, text:"My absolutely FAVORITE hotel in NOLA. Safe location, GREAT location ... right at the edge of the French Quarter. You are RIGHT THERE. Right where you want to be. You will not find a better location, period. We used to stay at the Ritz, but prefer the Monteleone, hands down. Just location. It's not the fanciest, it's not the most hip.  No rooftop pool. But it's where I stay."},
+  {id:2, stars:5, text:"You know when you google places to eat and sometimes you choose a location because of all the reviews??? Well this place lived up to the hype! The \"Famous\" charbroiled oysters were AMAZING! At first I was going to order the half dozen but the waiter told me \"Don't cheat yourself\". And I'm glad I took his advice! Wow they were something special. Service was great and friendly."},
+  {id:3, stars:1, text:"I was looking forward to spending Mardi Gras at what others have acclaimed to be one of the best hotels in Nola. The hotel is horrible. The people at the front desk were not only rude but confrontational and the worst service I've ever encountered. The room they assigned us had mold and was filthy."},
+  {id:4, stars:1, text:"This place has nothing going for it beyond it being old. Unfortunately it doesn't appear to have been cleaned since it opened over 100 years ago. I mean, this is truly a dirty, dirty place and the management should be embarrassed. The carousel bar is a gimmicky mess with a bad staff who can't make a decent drink."},
+  {id:5, stars:3, text:"The char grilled oysters were the best. The place is actually a bit overrated. When I got up to the restaurant the line was down the street, the food doesn't have a ton of flavor like I would have liked but it's still good but very overpriced in my opinion for not a lot of portion size. I would do more research before coming here next time."},
+  {id:6, stars:3, text:"The Hotel Monteleone is a lovely old hotel. It's set back enough off the busier streets that it's relatively quiet for a French Quarter Hotel. That said, on a weekend night sirens and the like are still quite loud. The front desk staff was lovely and helpful. The bar is great and everyone who works there is friendly."},
+  {id:7, stars:3, text:"This was a 5-star review that, sadly, had to be downgraded. When it came time for my parents to celebrate a big birthday in NOLA, we said there's no choice for accommodation but the Monteleone. They informed the Monteleone multiple times of the special occasion. Sadly, the hotel did nothing to acknowledge this milestone celebration. The room was fine but nothing special for the price."},
+  {id:8, stars:2, text:"Wait? How did this place get 4 stars and over 4K reviews? Last time I came to New Orleans I went to Felix's across from Acme. I told myself the next time I went back to NOLA I would go to Acme. My boyfriend and I got here at around 8 pm and there was a long line but we didn't have to wait long before we were seated. The food was underwhelming and overpriced for what you get."},
+  {id:9, stars:4, text:"Stunning hotel, great service and a fantastic brunch!! The best beignets in Nola! The hotel is old and can get a little loud if you're on the street side however so take that into account when booking. The carousel bar is great but can get crowded if they have live music. Go early for a pre dinner drink!"},
+  {id:10, stars:4, text:"Never stayed here in a room before but have been to the bar many times. The carousel bar is very cool and historic. Even if you're walking by stop in and have a drink."}
+];
+
+var ASPECTS = ["Room","Service","Location","Food","Value","Cleanliness","Noise","Amenities","Atmosphere"];
+var SENTIMENT_LABELS = ['1 — Very Neg','2 — Neg','3 — Neutral','4 — Pos','5 — Very Pos'];
+var SENTIMENT_COLORS = ['#EF4444','#F97316','#EAB308','#84CC16','#22C55E'];
+
+// ─── FIREBASE ───────────────────────────────────────────────────────
+var db = null;
+var allSubmissions = [];
+var charts = {};
+
+try {
+  firebase.initializeApp({
+    apiKey: "AIzaSyCFmi-ChDLgkg_xXVNWQijXOYcTUey6Vdo",
+    authDomain: "correlation-causation-bddm.firebaseapp.com",
+    projectId: "correlation-causation-bddm",
+    storageBucket: "correlation-causation-bddm.firebasestorage.app",
+    messagingSenderId: "1093959948725",
+    appId: "1:1093959948725:web:aa84648ac6907b92ff21fc"
+  });
+  db = firebase.firestore();
+  startListening();
+} catch (e) {
+  console.error('Firebase init failed:', e);
+  document.getElementById('firebaseWarning').classList.remove('hidden');
+  document.getElementById('liveIndicator').classList.remove('bg-green-400');
+  document.getElementById('liveIndicator').classList.remove('pulse');
+  document.getElementById('liveIndicator').classList.add('bg-red-500');
+}
+
+function startListening() {
+  db.collection('human_baseline').onSnapshot(function(snapshot) {
+    allSubmissions = [];
+    snapshot.forEach(function(doc) {
+      var data = doc.data();
+      data.id = doc.id;
+      allSubmissions.push(data);
+    });
+    renderResults();
+  }, function(err) {
+    console.error('Snapshot error:', err);
+    document.getElementById('firebaseWarning').classList.remove('hidden');
+    document.getElementById('liveIndicator').classList.remove('bg-green-400');
+    document.getElementById('liveIndicator').classList.remove('pulse');
+    document.getElementById('liveIndicator').classList.add('bg-red-500');
+  });
+}
+
+// ─── RENDER ─────────────────────────────────────────────────────────
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function renderResults() {
+  var N = allSubmissions.length;
+
+  if (N === 0) {
+    document.getElementById('waitingState').classList.remove('hidden');
+    document.getElementById('summaryStats').classList.add('hidden');
+    document.getElementById('reviewResults').innerHTML = '';
+    document.getElementById('controls').classList.add('hidden');
+    // Destroy old charts
+    Object.keys(charts).forEach(function(k) { charts[k].destroy(); });
+    charts = {};
+    return;
+  }
+
+  document.getElementById('waitingState').classList.add('hidden');
+  document.getElementById('summaryStats').classList.remove('hidden');
+  document.getElementById('controls').classList.remove('hidden');
+
+  // Per-review aggregation
+  var reviewData = [];
+  for (var r = 0; r < 10; r++) {
+    var sentiments = [];
+    var aspects = [];
+    for (var j = 0; j < N; j++) {
+      var sub = allSubmissions[j];
+      if (sub.ratings && sub.ratings[r]) {
+        sentiments.push(sub.ratings[r].sentiment);
+        aspects.push(sub.ratings[r].aspect);
+      }
+    }
+
+    var sentDist = [0,0,0,0,0];
+    sentiments.forEach(function(s) { sentDist[s-1]++; });
+
+    var count = sentiments.length;
+    var mean = count > 0 ? sentiments.reduce(function(a,b){return a+b;},0) / count : 0;
+    var variance = count > 0 ? sentiments.reduce(function(a,s){return a + (s - mean) * (s - mean);},0) / count : 0;
+    var stdDev = Math.sqrt(variance);
+
+    var aspCount = new Array(9).fill(0);
+    aspects.forEach(function(a) { aspCount[a]++; });
+    var maxAspCount = Math.max.apply(null, aspCount);
+    var topAspect = aspCount.indexOf(maxAspCount);
+    var aspectAgreement = count > 0 ? (maxAspCount / count * 100).toFixed(0) : 0;
+
+    reviewData.push({ sentDist: sentDist, mean: mean, stdDev: stdDev, topAspect: topAspect, aspectAgreement: aspectAgreement, count: count });
+  }
+
+  // Find most/least agreed
+  var minStd = Infinity, maxStd = -1, minIdx = 0, maxIdx = 0;
+  reviewData.forEach(function(d, i) {
+    if (d.count > 0) {
+      if (d.stdDev < minStd) { minStd = d.stdDev; minIdx = i; }
+      if (d.stdDev > maxStd) { maxStd = d.stdDev; maxIdx = i; }
+    }
+  });
+
+  // Summary
+  document.getElementById('statCount').textContent = N;
+  document.getElementById('statAgreed').innerHTML = 'Review #' + (minIdx+1) + ' <span class="text-xs text-gray-400 font-normal">(SD ' + minStd.toFixed(2) + ')</span>';
+  document.getElementById('statDisagreed').innerHTML = 'Review #' + (maxIdx+1) + ' <span class="text-xs text-gray-400 font-normal">(SD ' + maxStd.toFixed(2) + ')</span>';
+
+  // Per-review cards — rebuild if count changed
+  var container = document.getElementById('reviewResults');
+  var needsRebuild = container.children.length !== 10;
+
+  if (needsRebuild) {
+    Object.keys(charts).forEach(function(k) { charts[k].destroy(); });
+    charts = {};
+    container.innerHTML = '';
+
+    reviewData.forEach(function(d, i) {
+      var r = REVIEWS[i];
+      var snippet = r.text.length > 80 ? r.text.slice(0, 80) + '...' : r.text;
+
+      var card = document.createElement('div');
+      card.className = 'review-card mb-4';
+      card.id = 'resultCard' + i;
+      card.innerHTML =
+        '<div class="flex items-start justify-between flex-wrap gap-2 mb-2">' +
+          '<div>' +
+            '<span class="font-bold" style="color:var(--navy)">Review #' + r.id + '</span>' +
+            '<span id="disagBadge' + i + '" class="hidden text-xs font-semibold px-2 py-0.5 rounded-full text-white ml-2" style="background:var(--coral)">High Disagreement</span>' +
+            '<p class="text-xs text-gray-500 mt-0.5 italic">"' + escHtml(snippet) + '"</p>' +
+          '</div>' +
+          '<div class="text-right text-sm" id="statsBox' + i + '"></div>' +
+        '</div>' +
+        '<div class="chart-container"><canvas id="profChart' + i + '"></canvas></div>';
+      container.appendChild(card);
+    });
+  }
+
+  // Update data for each card
+  reviewData.forEach(function(d, i) {
+    var card = document.getElementById('resultCard' + i);
+    var isDisagreement = d.stdDev > 1.0;
+    if (isDisagreement) {
+      card.classList.add('disagreement');
+      document.getElementById('disagBadge' + i).classList.remove('hidden');
+    } else {
+      card.classList.remove('disagreement');
+      document.getElementById('disagBadge' + i).classList.add('hidden');
+    }
+
+    document.getElementById('statsBox' + i).innerHTML =
+      '<div><span class="text-gray-500">Top aspect:</span> <span class="font-semibold" style="color:var(--navy)">' + ASPECTS[d.topAspect] + '</span> <span class="text-xs text-gray-400">(' + d.aspectAgreement + '%)</span></div>' +
+      '<div><span class="text-gray-500">Mean:</span> <span class="font-semibold">' + d.mean.toFixed(2) + '</span> <span class="text-gray-500 ml-2">SD:</span> <span class="font-semibold">' + d.stdDev.toFixed(2) + '</span></div>';
+
+    if (charts[i]) {
+      charts[i].data.datasets[0].data = d.sentDist;
+      charts[i].update('none');
+    } else {
+      var ctx = document.getElementById('profChart' + i).getContext('2d');
+      charts[i] = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: SENTIMENT_LABELS,
+          datasets: [{
+            data: d.sentDist,
+            backgroundColor: SENTIMENT_COLORS,
+            borderRadius: 3,
+            barThickness: 16
+          }]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: function(ctx) { return ctx.raw + ' student' + (ctx.raw !== 1 ? 's' : ''); }
+              }
+            }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: { stepSize: 1, font: { size: 11 } },
+              grid: { display: false }
+            },
+            y: {
+              ticks: { font: { size: 11 } },
+              grid: { display: false }
+            }
+          }
+        }
+      });
+    }
+  });
+}
+
+// ─── EXPORT CSV ─────────────────────────────────────────────────────
+function exportCSV() {
+  if (allSubmissions.length === 0) return;
+
+  var header = ['submission_id'];
+  for (var r = 1; r <= 10; r++) {
+    header.push('review' + r + '_sentiment');
+    header.push('review' + r + '_aspect');
+  }
+  header.push('timestamp');
+
+  var rows = [header.join(',')];
+  allSubmissions.forEach(function(sub) {
+    var row = [sub.sessionId || sub.id];
+    for (var r = 0; r < 10; r++) {
+      if (sub.ratings && sub.ratings[r]) {
+        row.push(sub.ratings[r].sentiment);
+        row.push(ASPECTS[sub.ratings[r].aspect] || sub.ratings[r].aspect);
+      } else {
+        row.push('');
+        row.push('');
+      }
+    }
+    var ts = sub.timestamp ? sub.timestamp.toDate().toISOString() : '';
+    row.push(ts);
+    rows.push(row.join(','));
+  });
+
+  var blob = new Blob([rows.join('\n')], { type: 'text/csv' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'human_baseline_results.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── RESET ──────────────────────────────────────────────────────────
+function confirmReset() {
+  if (!confirm('Delete ALL student submissions? This cannot be undone.')) return;
+  if (!confirm('Are you sure? This will erase all data.')) return;
+
+  var batch = db.batch();
+  allSubmissions.forEach(function(sub) {
+    batch.delete(db.collection('human_baseline').doc(sub.id));
+  });
+  batch.commit().then(function() {
+    // onSnapshot will handle the UI update
+  }).catch(function(err) {
+    console.error('Reset failed:', err);
+    alert('Reset failed: ' + err.message);
+  });
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Human Baseline Exercise — Session 5: Customer Voice</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<style>
+  :root {
+    --navy: #1E3A5F;
+    --coral: #E07A5F;
+    --coral-light: #E07A5F22;
+  }
+  body { font-size: 14px; line-height: 1.6; }
+  .star { color: #F59E0B; }
+  .review-card { border: 1px solid #e2e8f0; border-radius: 8px; padding: 1rem; margin-bottom: 1rem; background: #fff; }
+  .review-card.complete { border-left: 4px solid #10B981; }
+  .sentiment-radio input[type="radio"] { display: none; }
+  .sentiment-radio label {
+    display: inline-block; padding: 4px 10px; border: 2px solid #e2e8f0;
+    border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 4px;
+    transition: all 0.15s;
+  }
+  .sentiment-radio label:hover { border-color: var(--coral); }
+  .sentiment-radio input[type="radio"]:checked + label {
+    background: var(--navy); color: #fff; border-color: var(--navy);
+  }
+  select { font-size: 14px; }
+  @media (max-width: 768px) {
+    .sentiment-radio label { font-size: 11px; padding: 3px 6px; }
+  }
+</style>
+</head>
+<body class="bg-gray-50 min-h-screen flex flex-col">
+
+<!-- Header -->
+<header class="text-white py-4 px-6 shadow-md" style="background:var(--navy)">
+  <h1 class="text-xl md:text-2xl font-bold tracking-tight">Human Baseline Exercise</h1>
+  <p class="text-sm opacity-80 mt-0.5">Session 5: Customer Voice — Text Analytics</p>
+</header>
+
+<main class="flex-1 px-6 pb-8 max-w-4xl mx-auto w-full">
+  <!-- Activity box -->
+  <div class="rounded-lg p-4 mt-4 mb-4 border-l-4" style="background:var(--coral-light);border-color:var(--coral)">
+    <p class="font-semibold text-sm" style="color:var(--navy)">Activity</p>
+    <p class="text-sm mt-1">Rate each review: <strong>(1)</strong> Read the review text, <strong>(2)</strong> Rate overall sentiment from 1 (very negative) to 5 (very positive), <strong>(3)</strong> Pick the primary aspect discussed, <strong>(4)</strong> Click <em>Submit</em> when done with all 10.</p>
+  </div>
+
+  <!-- Progress -->
+  <div id="progressArea" class="flex items-center justify-between mb-3">
+    <span id="progressText" class="text-sm text-gray-500">0 / 10 complete</span>
+    <div class="w-48 h-2 bg-gray-200 rounded-full overflow-hidden">
+      <div id="progressBar" class="h-full rounded-full transition-all" style="width:0%;background:var(--navy)"></div>
+    </div>
+  </div>
+
+  <!-- Review cards -->
+  <div id="reviewCards"></div>
+
+  <!-- Submit -->
+  <div id="submitArea" class="text-center mt-6">
+    <button id="submitBtn" onclick="submitResponses()" disabled
+      class="px-8 py-3 rounded-lg text-white font-semibold text-base disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
+      style="background:var(--navy)">
+      Submit All Responses
+    </button>
+  </div>
+
+  <!-- Submitted confirmation (hidden until submit) -->
+  <div id="confirmBox" class="hidden mt-6 max-w-xl mx-auto text-center">
+    <div class="rounded-lg p-6 border-2" style="border-color:#10B981;background:#10B98118">
+      <svg class="mx-auto mb-3" width="48" height="48" fill="none" viewBox="0 0 24 24" stroke="#10B981" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+      </svg>
+      <p class="text-lg font-bold" style="color:var(--navy)">Submitted!</p>
+      <p class="text-sm text-gray-600 mt-1">Your responses have been recorded. The professor will see them in real time.</p>
+    </div>
+  </div>
+
+  <!-- Firebase warning (hidden unless Firebase fails) -->
+  <div id="firebaseWarning" class="hidden mt-4 max-w-xl mx-auto">
+    <div class="rounded-lg p-4 border-l-4 border-yellow-500 bg-yellow-50">
+      <p class="text-sm text-yellow-800"><strong>Note:</strong> Could not connect to the live results server. Your responses were not submitted. Please let the instructor know.</p>
+    </div>
+  </div>
+</main>
+
+<!-- Footer -->
+<footer class="text-center text-xs text-gray-400 py-4 border-t border-gray-200 mt-auto">
+  BDDM &bull; MSc Tourism Management &bull; Alba Graduate Business School
+</footer>
+
+<script>
+// ─── DATA ────────────────────────────────────────────────────────────
+var REVIEWS = [
+  {id:1, stars:5, text:"My absolutely FAVORITE hotel in NOLA. Safe location, GREAT location ... right at the edge of the French Quarter. You are RIGHT THERE. Right where you want to be. You will not find a better location, period. We used to stay at the Ritz, but prefer the Monteleone, hands down. Just location. It's not the fanciest, it's not the most hip.  No rooftop pool. But it's where I stay."},
+  {id:2, stars:5, text:"You know when you google places to eat and sometimes you choose a location because of all the reviews??? Well this place lived up to the hype! The \"Famous\" charbroiled oysters were AMAZING! At first I was going to order the half dozen but the waiter told me \"Don't cheat yourself\". And I'm glad I took his advice! Wow they were something special. Service was great and friendly."},
+  {id:3, stars:1, text:"I was looking forward to spending Mardi Gras at what others have acclaimed to be one of the best hotels in Nola. The hotel is horrible. The people at the front desk were not only rude but confrontational and the worst service I've ever encountered. The room they assigned us had mold and was filthy."},
+  {id:4, stars:1, text:"This place has nothing going for it beyond it being old. Unfortunately it doesn't appear to have been cleaned since it opened over 100 years ago. I mean, this is truly a dirty, dirty place and the management should be embarrassed. The carousel bar is a gimmicky mess with a bad staff who can't make a decent drink."},
+  {id:5, stars:3, text:"The char grilled oysters were the best. The place is actually a bit overrated. When I got up to the restaurant the line was down the street, the food doesn't have a ton of flavor like I would have liked but it's still good but very overpriced in my opinion for not a lot of portion size. I would do more research before coming here next time."},
+  {id:6, stars:3, text:"The Hotel Monteleone is a lovely old hotel. It's set back enough off the busier streets that it's relatively quiet for a French Quarter Hotel. That said, on a weekend night sirens and the like are still quite loud. The front desk staff was lovely and helpful. The bar is great and everyone who works there is friendly."},
+  {id:7, stars:3, text:"This was a 5-star review that, sadly, had to be downgraded. When it came time for my parents to celebrate a big birthday in NOLA, we said there's no choice for accommodation but the Monteleone. They informed the Monteleone multiple times of the special occasion. Sadly, the hotel did nothing to acknowledge this milestone celebration. The room was fine but nothing special for the price."},
+  {id:8, stars:2, text:"Wait? How did this place get 4 stars and over 4K reviews? Last time I came to New Orleans I went to Felix's across from Acme. I told myself the next time I went back to NOLA I would go to Acme. My boyfriend and I got here at around 8 pm and there was a long line but we didn't have to wait long before we were seated. The food was underwhelming and overpriced for what you get."},
+  {id:9, stars:4, text:"Stunning hotel, great service and a fantastic brunch!! The best beignets in Nola! The hotel is old and can get a little loud if you're on the street side however so take that into account when booking. The carousel bar is great but can get crowded if they have live music. Go early for a pre dinner drink!"},
+  {id:10, stars:4, text:"Never stayed here in a room before but have been to the bar many times. The carousel bar is very cool and historic. Even if you're walking by stop in and have a drink."}
+];
+
+var ASPECTS = ["Room","Service","Location","Food","Value","Cleanliness","Noise","Amenities","Atmosphere"];
+var SENTIMENT_LABELS = ["1 — Very Negative","2 — Negative","3 — Neutral","4 — Positive","5 — Very Positive"];
+var CHAR_LIMIT = 200;
+
+// ─── FIREBASE ───────────────────────────────────────────────────────
+var db = null;
+var firebaseReady = false;
+
+try {
+  firebase.initializeApp({
+    apiKey: "AIzaSyCFmi-ChDLgkg_xXVNWQijXOYcTUey6Vdo",
+    authDomain: "correlation-causation-bddm.firebaseapp.com",
+    projectId: "correlation-causation-bddm",
+    storageBucket: "correlation-causation-bddm.firebasestorage.app",
+    messagingSenderId: "1093959948725",
+    appId: "1:1093959948725:web:aa84648ac6907b92ff21fc"
+  });
+  db = firebase.firestore();
+  firebaseReady = true;
+} catch (e) {
+  console.warn('Firebase init failed:', e);
+}
+
+// ─── BUILD STUDENT CARDS ────────────────────────────────────────────
+function buildCards() {
+  var container = document.getElementById('reviewCards');
+  container.innerHTML = '';
+  REVIEWS.forEach(function(r, idx) {
+    var stars = '\u2605'.repeat(r.stars) + '\u2606'.repeat(5 - r.stars);
+    var isLong = r.text.length > CHAR_LIMIT;
+    var shortText = isLong ? r.text.slice(0, CHAR_LIMIT) + '...' : r.text;
+
+    var html = '<div class="review-card" id="card' + idx + '">';
+    html += '<div class="flex items-center gap-3 mb-2">';
+    html += '<span class="font-bold text-base" style="color:var(--navy)">Review #' + r.id + '</span>';
+    html += '<span class="star text-lg" title="' + r.stars + ' stars">' + stars + '</span>';
+    html += '</div>';
+
+    html += '<div class="text-sm text-gray-700 mb-3">';
+    html += '<span id="textShort' + idx + '">' + escHtml(shortText) + '</span>';
+    if (isLong) {
+      html += '<span id="textFull' + idx + '" class="hidden">' + escHtml(r.text) + '</span>';
+      html += ' <button id="toggleBtn' + idx + '" onclick="toggleText(' + idx + ')" class="text-xs font-semibold underline" style="color:var(--coral)">Show more</button>';
+    }
+    html += '</div>';
+
+    html += '<div class="mb-3"><span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Sentiment</span>';
+    html += '<div class="sentiment-radio mt-1 flex flex-wrap gap-1">';
+    for (var s = 1; s <= 5; s++) {
+      html += '<input type="radio" name="sent' + idx + '" id="sent' + idx + '_' + s + '" value="' + s + '" onchange="checkProgress()">';
+      html += '<label for="sent' + idx + '_' + s + '">' + SENTIMENT_LABELS[s-1] + '</label>';
+    }
+    html += '</div></div>';
+
+    html += '<div><span class="text-xs font-semibold uppercase tracking-wide text-gray-500">Primary Aspect</span>';
+    html += '<div class="mt-1"><select id="aspect' + idx + '" onchange="checkProgress()" class="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2" style="min-width:180px">';
+    html += '<option value="">— Select —</option>';
+    ASPECTS.forEach(function(a, ai) { html += '<option value="' + ai + '">' + a + '</option>'; });
+    html += '</select></div></div>';
+
+    html += '</div>';
+    container.innerHTML += html;
+  });
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function toggleText(idx) {
+  var short = document.getElementById('textShort' + idx);
+  var full = document.getElementById('textFull' + idx);
+  var btn = document.getElementById('toggleBtn' + idx);
+  if (full.classList.contains('hidden')) {
+    short.classList.add('hidden'); full.classList.remove('hidden'); btn.textContent = 'Show less';
+  } else {
+    short.classList.remove('hidden'); full.classList.add('hidden'); btn.textContent = 'Show more';
+  }
+}
+
+// ─── PROGRESS ───────────────────────────────────────────────────────
+function checkProgress() {
+  var done = 0;
+  for (var i = 0; i < 10; i++) {
+    var sent = document.querySelector('input[name="sent' + i + '"]:checked');
+    var asp = document.getElementById('aspect' + i).value;
+    var card = document.getElementById('card' + i);
+    if (sent && asp !== '') {
+      done++;
+      card.classList.add('complete');
+    } else {
+      card.classList.remove('complete');
+    }
+  }
+  document.getElementById('progressText').textContent = done + ' / 10 complete';
+  document.getElementById('progressBar').style.width = (done * 10) + '%';
+  document.getElementById('submitBtn').disabled = done < 10;
+}
+
+// ─── SUBMIT ─────────────────────────────────────────────────────────
+function submitResponses() {
+  var ratings = [];
+  for (var i = 0; i < 10; i++) {
+    var s = parseInt(document.querySelector('input[name="sent' + i + '"]:checked').value);
+    var a = parseInt(document.getElementById('aspect' + i).value);
+    ratings.push({ sentiment: s, aspect: a });
+  }
+
+  var btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Submitting...';
+
+  if (!firebaseReady || !db) {
+    document.getElementById('firebaseWarning').classList.remove('hidden');
+    btn.textContent = 'Submit All Responses';
+    btn.disabled = false;
+    return;
+  }
+
+  var sessionId = 'session_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+
+  db.collection('human_baseline').add({
+    sessionId: sessionId,
+    ratings: ratings,
+    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+  })
+  .then(function() {
+    document.getElementById('reviewCards').classList.add('hidden');
+    document.getElementById('submitArea').classList.add('hidden');
+    document.getElementById('progressArea').classList.add('hidden');
+    document.getElementById('confirmBox').classList.remove('hidden');
+    document.getElementById('confirmBox').scrollIntoView({ behavior: 'smooth' });
+  })
+  .catch(function(err) {
+    console.error('Firestore write failed:', err);
+    document.getElementById('firebaseWarning').classList.remove('hidden');
+    btn.disabled = false;
+    btn.textContent = 'Submit All Responses';
+  });
+}
+
+// ─── INIT ───────────────────────────────────────────────────────────
+buildCards();
+</script>
+</body>
+</html>
